@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+
+# import Selenium
+from selenium import webdriver
+
+# import Python stdlib modules required
+from sys import stdout
+import logging
+from subprocess import Popen, PIPE
+from time import sleep
+from os import environ
+
+# import Requests library
+import requests
+
+# Import virtual X display
+from pyvirtualdisplay import Display
+
+# Initialise logger
+log = logging.getLogger("CAPTIVE_PORTAL.SYS")
+out_hdlr = logging.StreamHandler(stdout)
+out_hdlr.setFormatter(
+    logging.Formatter(
+        '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'))
+log.addHandler(out_hdlr)
+log.setLevel(logging.INFO)
+
+log.info("Initialising...")
+
+NET_CHECK_URI = "http://conncheck.opensuse.org"
+
+log.debug("Starting virtual display..")
+display = Display(visible=0, size=(1920, 1080))
+display.start()
+
+log.debug("Configuring Chrome..")
+options = webdriver.ChromeOptions()
+options.add_argument("ignore-certificate-errors")
+options.add_argument("proxy-server=socks5://127.0.0.1:16662")
+log.debug("Chrome configuration complete.")
+
+log.debug("Starting Chrome..")
+driver = webdriver.Chrome("/usr/lib64/chromium/chromedriver", options=options)
+log.debug("Chrome started.")
+
+
+def tidy_up():
+    log.info("Exiting..")
+    log.debug("Stop Chrome.")
+    driver.close()
+    log.debug("Stop X display.")
+    display.stop()
+
+
+def nm_conn_state():
+    log.info("Determining active connections..")
+    p1 = Popen(["/usr/local/bin/nm-get-conns"], stdout=PIPE, encoding='utf8')
+    result = [x for x in p1.stdout.readlines()]
+    result = [x.strip() for x in result]
+    conns = {}
+
+    log.debug("Processing network connection list.")
+
+    for key in result:
+        i = key.split(":")
+        v = (i[0], i[1])
+
+        conns['uuid'] = v
+
+    log.debug("Return processed connections dictionary..")
+    return(conns)
+
+
+def stagecoach_free_wifi():
+    log.info("WiFi network: Stagecoach..")
+
+    log.info("Processing Stagecoach WiFi network..")
+    driver.get(NET_CHECK_URI)
+
+    log.debug("Agreeing to Stagecoach AUP agreement.")
+    aup_agree = driver.find_element_by_xpath('//*[@id="aup_agree"]')
+    driver.execute_script("arguments[0].click();", aup_agree)
+    log.debug("Agreed to Stagecoach AUP agreement.")
+
+    log.debug("Confirming age with Stagecoach..")
+    age_confirm = driver.find_element_by_xpath('//*[@id="age_check"]')
+    driver.execute_script("arguments[0].click();", age_confirm)
+    log.debug("Confirmed age with Stagecoach..")
+
+    log.debug("Submitting form to Stagecoach WiFi network..")
+    connect_button1 = driver.find_element_by_xpath('//*[@id="anon_form"]/p[contains(concat(" ",normalize-space(@class)," ")," external_submit_section ")]/input[@type="submit"]')
+    driver.execute_script("arguments[0].click();", connect_button1)
+    log.debug("Stagecoach form submitted.")
+
+    log.debug("Entering email address to Stagecoach..")
+    email_input = driver.find_element_by_xpath('/html/body/div[2]/form/table/tbody/tr[1]/td[2]/input')
+    email_input.send_keys(environ["STAGECOACH_EMAIL"])
+
+    submit_email_button = driver.find_element_by_xpath('/html/body/div[2]/form/div/input')
+    driver.execute_script("arguments[0].click();", submit_email_button)
+    log.debug("Submitted final form.")
+
+    sleep(3)
+
+    log.info("Stagecoach WiFi network processed.")
+    log.debug("Return control to caller function.")
+
+
+def cloud_free_wifi():
+    log.info("WiFi network: The Cloud..")
+
+    driver.get(NET_CHECK_URI)
+
+    driver.get('https://service.thecloud.net/service-platform/login/')
+
+    email = driver.find_element_by_xpath('//*[@id="username"]')
+    email.send_keys(environ["CLOUD_EMAIL"])
+
+    password = driver.find_element_by_xpath('//*[@id="password"]')
+    email.send_keys(environ["CLOUD_PASSWORD"])
+
+    cont_button = driver.find_element_by_xpath('//*[@id="login"]/fieldset/div/button')
+    cont_button.click()
+
+    driver.get('https://service.thecloud.net/service-platform/products/purchase/459/')
+
+
+def bsk_free_wifi():
+    log.info("WiFi network: Basingstoke Free WiFi..")
+    driver.get(NET_CHECK_URI)
+
+    log.info("Processing..")
+
+
+def hcc_free_wifi():
+    log.info("WiFi network: HCC Guest..")
+
+    driver.get(NET_CHECK_URI)
+
+    login1_button = driver.find_element_by_xpath("/html/body/div/div/section/div[2]/div/p[3]/a")
+    login1_button.click()
+
+    email = driver.find_element_by_xpath('//*[@id="UserId"]')
+    email.send_keys(environ["HCC_WIFI_EMAIL"])
+
+    password = driver.find_element_by_xpath('//*[@id="Password"]')
+    password.send_keys(environ["HCC_WIFI_PASSWORD"])
+
+    login2_button = driver.find_element_by_xpath('//*[@id="log_submit"]')
+    login2_button.click()
+
+
+def decide_net_action(conn):
+    uuid, state = conn
+
+    if uuid == "06e7ae87-bc8d-4462-920f-b3496bb101ee" and state == "activated":
+        bsk_free_wifi()
+    elif uuid == "71c4a171-660c-42b8-8a39-ada1f9e50dcc" and state == "activated":
+        hcc_free_wifi()
+    elif uuid == "3b9f9ef7-47a3-4e58-a04a-8515b74fe0da" and state == "activated":
+        stagecoach_free_wifi()
+    elif uuid == "3bd0b20e-2d1e-46dd-b081-96b17ab519f8" and state == "activated":
+        cloud_free_wifi()
+    else:
+        log.debug("Network not matched!\n(UUID: {}, state: {})"
+                  .format(uuid, state))
+        log.debug("This is NOT an error!")
+
+
+def main():
+    log.info("Initialised!")
+
+    log.debug("Configure proxies for requests library..")
+    log.debug("Proxies configuration complete.")
+
+    proxies = {
+        'http': "socks5h://127.0.0.1:16662",
+        'https': "socks5h://127.0.0.1:16662"
+    }
+
+    log.info("Determining network connectivity..")
+    r = requests.get(NET_CHECK_URI, proxies=proxies)
+    if r.status_code == 204:
+        log.info("Connection is available, nothing to do!")
+        tidy_up()
+        exit(0)
+
+    conns = nm_conn_state()
+    log.debug("Iterating..")
+    for conn in conns:
+        uuid, _ = conns[conn]
+        log.debug("Iteration UUID: {}".format(uuid))
+        decide_net_action(conns[conn])
+
+    log.info("FINAL PHASE: Determining network connectivity.")
+    r = requests.get(NET_CHECK_URI, proxies=proxies)
+    if r.status_code == 204:
+        Popen(["/usr/bin/notify-send", "-a", "CAPTIVEPORTAL",
+               "Captive Portal", "Captive portal now connected."])
+        log.info("Connection now available, process successful!")
+        tidy_up()
+        exit(0)
+    else:
+        log.error("Something went wrong.") # send email
+        log.error("Connection not available.")
+        tidy_up()
+        exit(1)
+
+    tidy_up()
+    exit(0)
+
+if __name__ == "__main__":
+    main()
